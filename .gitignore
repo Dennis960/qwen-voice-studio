@@ -1,0 +1,18 @@
+# Secrets and local configuration
+.env
+!.env.example
+
+# Persistent service state and downloaded model weights
+data/*
+!data/.gitkeep
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store

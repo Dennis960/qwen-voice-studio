@@ -1,0 +1,11 @@
+services:
+  qwen-tts:
+    build: .
+    ports: ["127.0.0.1:8000:8000"]
+    env_file: .env
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /app/data/models
+    volumes: ["./data:/app/data"]
+    gpus: all
+    restart: unless-stopped
