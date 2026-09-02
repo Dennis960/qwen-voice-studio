@@ -39,12 +39,18 @@ def test_generate_is_documented_as_multipart():
     assert 'German' in properties['language']['enum']
     assert properties['language']['default'] == 'German'
     assert properties['voice_name']['enum'] == []
+    assert 'repetition_penalty' in properties
+    design_content = schema['paths']['/voices/design']['post']['requestBody']['content']['multipart/form-data']
+    design_body = design_content['schema']['$ref'].split('/')[-1]
+    assert 'pitch' in schema['components']['schemas'][design_body]['properties']
 
 
 def test_voice_studio_is_served():
     response = client().get('/app/')
     assert response.status_code == 200
     assert 'Qwen Voice Studio' in response.text
+    assert 'voice-information' in response.text
+    assert 'voice-dialog' not in response.text
 
 
 def test_api_rejects_requests_without_password():

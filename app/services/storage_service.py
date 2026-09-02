@@ -52,7 +52,7 @@ class StorageService:
         path.with_suffix(".json").write_text(json.dumps(metadata, default=str, indent=2))
         return path
 
-    def list_audio_for_voice(self, voice_name: str) -> list[dict]:
+    def list_audio_for_voice(self, voice_name: str, limit: int) -> list[dict]:
         items = []
         for metadata_path in self.settings.generated_dir.glob("*.json"):
             try:
@@ -63,7 +63,7 @@ class StorageService:
                 generation_id = metadata.get("generation_id")
                 if generation_id and (self.settings.generated_dir / f"{generation_id}.wav").is_file():
                     items.append(metadata)
-        return sorted(items, key=lambda item: item.get("generation_id", ""), reverse=True)
+        return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)[:limit]
 
     def delete_audio_for_voice(self, voice_name: str, generation_id: str) -> None:
         metadata_path = self.settings.generated_dir / f"{generation_id}.json"
@@ -77,3 +77,10 @@ class StorageService:
             raise HTTPException(404, detail={"code": "audio_not_found", "message": "Audio does not belong to this voice."})
         (self.settings.generated_dir / f"{generation_id}.wav").unlink(missing_ok=True)
         metadata_path.unlink(missing_ok=True)
+
+    def delete_all_audio_for_voice(self, voice_name: str) -> int:
+        deleted = 0
+        for item in self.list_audio_for_voice(voice_name, limit=10_000):
+            self.delete_audio_for_voice(voice_name, item["generation_id"])
+            deleted += 1
+        return deleted

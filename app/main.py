@@ -56,9 +56,6 @@ def custom_openapi():
         content = schema["paths"][path]["post"]["requestBody"]["content"]
         form_schema = content.pop("application/x-www-form-urlencoded")
         content["multipart/form-data"] = form_schema
-    patch_content = schema["paths"]["/voices/{voice_name}"]["patch"]["requestBody"]["content"]
-    patch_schema = patch_content.pop("application/x-www-form-urlencoded")
-    patch_content["multipart/form-data"] = patch_schema
     storage = getattr(app.state, "storage", None)
     voice_names = sorted(voice["name"] for voice in storage.load_voices().values()) if storage else []
     for path_item in schema["paths"].values():
@@ -113,24 +110,33 @@ async def create_voice(request: Request, name: str = Form(..., description="Huma
 def get_voice(request: Request, voice_name: str):
     return request.app.state.voices.public(request.app.state.voices.get(voice_name))
 
-@app.patch("/voices/{voice_name}", tags=["voices"], summary="Update saved voice metadata", description="Uses multipart form-data. Voice name is intentionally immutable so it remains the stable generation key.")
-def update_voice(request: Request, voice_name: str, description: str | None = Form(None, description="Replacement note. Leave unset to keep current value.", media_type="multipart/form-data"), tags: str | None = Form(None, description="Comma-separated labels, for example: narrator, german, warm."), language: str | None = Form(None, description=LANGUAGE_HELP)):
-    return request.app.state.voices.public(request.app.state.voices.update(voice_name, description, tags, language))
-
 @app.delete("/voices/{voice_name}", status_code=204, tags=["voices"], summary="Delete a voice by name")
 def delete_voice(request: Request, voice_name: str, keep_reference: bool = False):
     request.app.state.voices.delete(voice_name, keep_reference)
 
-@app.get("/voices/{voice_name}/audio", tags=["audio"], summary="List generated audio for a voice")
-def list_voice_audio(request: Request, voice_name: str):
+@app.get("/voices/{voice_name}/audio", tags=["audio"], summary="List newest generated audio for a voice")
+def list_voice_audio(request: Request, voice_name: str, limit: int = 5):
     voice = request.app.state.voices.get(voice_name)
-    items = request.app.state.storage.list_audio_for_voice(voice["name"])
+    items = request.app.state.storage.list_audio_for_voice(voice["name"], min(max(limit, 1), 100))
     return [{**item, "audio_url": f"/audio/{item['generation_id']}"} for item in items]
 
 @app.delete("/voices/{voice_name}/audio/{generation_id}", status_code=204, tags=["audio"], summary="Delete generated audio for a voice")
 def delete_voice_audio(request: Request, voice_name: str, generation_id: str):
     voice = request.app.state.voices.get(voice_name)
     request.app.state.storage.delete_audio_for_voice(voice["name"], generation_id)
+
+@app.delete("/voices/{voice_name}/audio", tags=["audio"], summary="Delete all generated audio for a voice")
+def delete_all_voice_audio(request: Request, voice_name: str):
+    voice = request.app.state.voices.get(voice_name)
+    return {"deleted": request.app.state.storage.delete_all_audio_for_voice(voice["name"])}
+
+@app.get("/voices/{voice_name}/reference-audio", tags=["voices"], response_class=FileResponse, summary="Play a voice reference recording")
+def get_reference_audio(request: Request, voice_name: str):
+    voice = request.app.state.voices.get(voice_name)
+    path = Path(voice["reference_audio_path"])
+    if not path.is_file():
+        raise HTTPException(404, detail={"code": "reference_audio_not_found", "message": "Reference audio does not exist."})
+    return FileResponse(path, media_type="audio/wav")
 
 @app.get("/audio/{generation_id}", tags=["audio"], response_class=FileResponse, summary="Play a generated WAV")
 def get_audio(request: Request, generation_id: str):
@@ -140,9 +146,9 @@ def get_audio(request: Request, generation_id: str):
     return FileResponse(path, media_type="audio/wav")
 
 @app.post("/voices/design", tags=["voices"], summary="Design and save a reusable character voice", description="Generates a VoiceDesign reference clip, then creates one persistent Base clone prompt from it. Returns the named voice metadata after inference completes.")
-async def design_voice(request: Request, name: str = Form(..., description="Unique human-readable name for the reusable character.", media_type="multipart/form-data"), reference_text: str = Form(..., description="Text used to create the character reference recording."), voice_description: str = Form(..., description="Natural-language persona and timbre description."), language: str = Form("German", description=LANGUAGE_HELP), emotion: str = Form("neutral", description=STYLE_HELP), intensity: float = Form(0.5, ge=0, le=1, description="Emotion strength from 0.0 subtle to 1.0 maximum."), pace: str | None = Form("medium", description="VoiceDesign only: slow, medium, medium_fast, or fast."), energy: str | None = Form("medium", description="VoiceDesign only: low, medium, or high."), pitch: str | None = Form("medium", description="VoiceDesign only: low, medium, or high.")):
+async def design_voice(request: Request, name: str = Form(..., description="Unique human-readable name for the reusable character.", media_type="multipart/form-data"), reference_text: str = Form(..., description="Text used to create the character reference recording."), voice_description: str = Form(..., description="Natural-language persona and timbre description."), language: str = Form("German", description=LANGUAGE_HELP), emotion: str = Form("neutral", description=STYLE_HELP), intensity: float = Form(0.5, ge=0, le=1, description="Emotion strength from 0.0 subtle to 1.0 maximum."), pace: str | None = Form("medium", description="VoiceDesign only: slow, medium, medium_fast, or fast."), energy: str | None = Form("medium", description="VoiceDesign only: low, medium, or high."), pitch: str | None = Form("medium", description="VoiceDesign only: low, medium, or high."), do_sample: bool = Form(True, description="Official Transformers sampling switch."), top_k: int = Form(50, ge=1, description="Official top-k sampling value."), top_p: float = Form(1.0, gt=0, le=1, description="Official nucleus sampling value."), temperature: float = Form(0.9, gt=0, description="Official sampling temperature."), repetition_penalty: float = Form(1.05, gt=0, description="Official repetition penalty."), max_new_tokens: int = Form(2048, ge=1, le=4096, description="Maximum generated codec tokens.")):
     style = style_from_form(emotion, intensity, pace, energy, pitch)
-    design_request = GenerateRequest(text=reference_text, language=language, mode="voice_design", voice_description=voice_description, style=style)
+    design_request = GenerateRequest(text=reference_text, language=language, mode="voice_design", voice_description=voice_description, style=style, generation=generation_from_form(do_sample, top_k, top_p, temperature, repetition_penalty, max_new_tokens))
     try:
         async with request.app.state.gpu_slots:
             audio_path, _ = await asyncio.to_thread(request.app.state.tts.generate, design_request)

@@ -22,7 +22,22 @@ class VoiceService:
         return normalized.casefold()
 
     def public(self, voice: dict) -> dict:
-        return {key: value for key, value in voice.items() if key not in {"reference_audio_path", "voice_prompt_path"}}
+        return {
+            "name": voice["name"],
+            "type": voice["type"],
+            "language": voice["language"],
+            "reference_text": voice.get("reference_text"),
+            "voice_description": voice.get("voice_description"),
+            "x_vector_only_mode": voice.get("x_vector_only_mode", False),
+            "reference_audio_url": f"/voices/{voice['name']}/reference-audio",
+            "prompt": {
+                "format": 1,
+                "base_model": self.models.settings.qwen_base_model,
+                "mode": "x-vector only" if voice.get("x_vector_only_mode") else "ICL clone prompt",
+                "stored": bool(voice.get("voice_prompt_path")),
+            },
+            "created_at": voice.get("created_at"),
+        }
 
     def get(self, name: str) -> dict:
         voice = self.storage.load_voices().get(self.key_for(name))
